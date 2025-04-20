@@ -1,0 +1,11 @@
+# Ignore Python cache, virtualenvs, and environment files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+.env
+.DS_Store
+# Ignore Node modules if any
+node_modules/ 
