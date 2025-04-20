@@ -2,7 +2,7 @@
 
 A voice-controlled cryptocurrency assistant that allows users to check balances, send transactions, and manage their crypto assets using natural language commands.
 
-## 📋 Overview
+## Overview
 
 This project implements a voice-first interface for cryptocurrency operations, making blockchain interactions more accessible and intuitive. Users can perform common crypto operations using voice commands or text input as a fallback option.
 
@@ -24,7 +24,7 @@ This project implements a voice-first interface for cryptocurrency operations, m
 - **Success Notifications**: Audible confirmation of completed operations
 - **Intuitive UI**: Clean interface with visual feedback
 
-## 🔄 Sample User Flows
+## Sample User Flows
 
 ### Checking Balance
 1. User: *"What's my current balance?"* (voice)
@@ -40,7 +40,7 @@ This project implements a voice-first interface for cryptocurrency operations, m
 1. User: *"Show me my recent transactions"* (voice)
 2. Assistant: *Lists recent transactions* (voice)
 
-## 🔧 Tech Stack
+## Tech Stack
 
 ### Frontend
 - Next JS
