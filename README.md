@@ -44,6 +44,7 @@ This project implements a voice-first interface for cryptocurrency operations, m
 
 ### Frontend
 - Next JS
+- Tailwind CSS
 
 ### Voice Processing
 - 
