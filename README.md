@@ -1,4 +1,4 @@
-# Encode DeAI Final Project - Crypto Voice Assistant MVP
+# Encode DeAI Final Project - Crypto Voice Assistant
 
 A voice-controlled cryptocurrency assistant that allows users to check balances, send transactions, and manage their crypto assets using natural language commands.
 
