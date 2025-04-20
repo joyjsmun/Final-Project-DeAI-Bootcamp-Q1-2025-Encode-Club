@@ -47,7 +47,8 @@ This project implements a voice-first interface for cryptocurrency operations, m
 - Tailwind CSS
 
 ### Voice Processing
-- 
+- [Speech to Text](https://platform.openai.com/docs/guides/speech-to-text) using OpenAI gpt-4o-transcribe
+- [Text to Speech](https://platform.openai.com/docs/guides/text-to-speech) using OpenAI gpt-4o-mini-tts
 
 ### Blockchain Integration
 - [Goat SDK](https://github.com/goat-sdk) for Web3 functionality
@@ -56,6 +57,7 @@ This project implements a voice-first interface for cryptocurrency operations, m
 
 ## Contributors
 - joyjsmun (Unique ID: OFVwFA)
+- ifanzalukhu97 (Unique ID: S3lFve)
 - Add more contributors...
 
 
