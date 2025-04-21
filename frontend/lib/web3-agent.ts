@@ -1,21 +1,12 @@
 import OpenAI from 'openai';
 import { ethers } from 'ethers';
+import { addressBook } from './address-book'; // Import addressBook
 // Removed dotenv import, rely on Next.js process.env loading
 // Added ChatCompletionToolMessageParam
 import type { ChatCompletionMessageParam, ChatCompletionToolMessageParam } from 'openai/resources/chat/completions';
 
 // --- Address Book ---
-// Moved address book here for simplicity, could be loaded from elsewhere
-// TODO: Consider moving this to a separate config file or database if it grows large
-export const addressBook: Record<string, string> = {
-    Alice: process.env.ALICE_ADDRESS || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", // Default Hardhat #0
-    Bob: process.env.BOB_ADDRESS || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",   // Default Hardhat #1
-    Charlie: process.env.CHARLIE_ADDRESS || "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC", // Default Hardhat #2
-    David: process.env.DAVID_ADDRESS || "0x90F79bf6EB2c4f870365E785982E1f101E93b906",   // Default Hardhat #3
-    Eve: process.env.EVE_ADDRESS || "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",     // Default Hardhat #4
-    // Add more names and addresses as needed
-};
-
+// Moved to frontend/lib/addressBook.ts
 
 // --- Configuration ---
 // Use process.env directly as Next.js handles .env.local loading
@@ -128,7 +119,7 @@ const sendErc20TransferSchema: OpenAI.Chat.Completions.ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'sendERC20Transfer',
-    description: 'Initiates an ERC20 token transfer on the blockchain.',
+    description: 'Initiates an ERC20 token transfer (like WETH or USDC) on the blockchain. **Use this for ERC20 tokens, NOT for native ETH.**',
     parameters: {
       type: 'object',
       properties: {
@@ -138,7 +129,7 @@ const sendErc20TransferSchema: OpenAI.Chat.Completions.ChatCompletionTool = {
         },
         token: {
           type: 'string',
-          description: 'The symbol of the ERC20 token to transfer (e.g., USDC, WETH)',
+          description: 'The symbol of the ERC20 token to transfer (e.g., USDC, WETH). **This parameter is REQUIRED for ERC20 transfers.**',
         },
         amount: {
           type: 'number',
@@ -194,7 +185,7 @@ const sendEthTransferSchema: OpenAI.Chat.Completions.ChatCompletionTool = {
     type: 'function',
     function: {
         name: 'sendEthTransfer',
-        description: 'Initiates a transfer of native ETH to another Ethereum address or registered name.',
+        description: 'Initiates a transfer of **native ETH** to another Ethereum address or registered name. **Do NOT use this for ERC20 tokens like WETH or USDC.**',
         parameters: {
             type: 'object',
             properties: {
@@ -204,7 +195,7 @@ const sendEthTransferSchema: OpenAI.Chat.Completions.ChatCompletionTool = {
                 },
                 amount: {
                     type: 'number',
-                    description: 'The amount of ETH to send.',
+                    description: 'The amount of **native ETH** to send. Do not specify a token symbol here.',
                 },
             },
             required: ['recipient', 'amount'],
@@ -702,13 +693,22 @@ export async function processTranscribedTextInput(
     // Add system prompt if not present or update self-address if needed
     const systemPromptContent = `
 You are an assistant that helps with Ethereum transactions.
-Your Ethereum address is: ${currentSelfAddress}. Whenever the user refers to "me", "myself", or "my" in the context of an address, you MUST use this address.
+Your Ethereum address is: ${currentSelfAddress}. When the user refers to "me", "myself", "my", or "mine" in the context of an address, you MUST use this address.
 
-**CRITICAL INSTRUCTION:** If a user provides a name (e.g., 'Alice', 'Bob', 'Eve') OR uses "me"/"my account" etc. instead of a direct Ethereum address for a recipient or balance check, you MUST use the \`lookupAddressByName\` tool FIRST to resolve the name/reference to an address. ONLY AFTER you have successfully received the address from \`lookupAddressByName\` should you call other tools like \`sendEthTransfer\`, \`sendErc20Transfer\`, \`getEthBalance\`, or \`getErc20Balance\` using that resolved address.
+**CRITICAL INSTRUCTION:** If a user provides a name (e.g., 'Alice', 'Bob', 'Eve') OR uses "me"/"my account" etc. instead of a direct Ethereum address for a recipient or balance check, you MUST use the \`lookupAddressByName\` tool FIRST to resolve the name/reference to an address. **DO NOT attempt to call the name itself as a function.** ONLY AFTER you have successfully received the address from \`lookupAddressByName\` should you call other tools like \`sendEthTransfer\`, \`sendErc20Transfer\`, \`getEthBalance\`, or \`getErc20Balance\` using that resolved address.
+
+**Choosing the Right Transfer Function - VERY IMPORTANT:**
+*   Use \`sendEthTransfer\` ONLY for sending **native ETH**. **You MUST NOT use \`sendEthTransfer\` for WETH or other ERC20 tokens.**
+*   Use \`sendErc20Transfer\` for sending **ERC20 tokens**, such as **WETH** or **USDC**. If the user asks to send WETH, you MUST use \`sendErc20Transfer\` and include the \`token\` parameter.
 
 Use the \`getTokenAddress\` tool if you need the contract address for a specific token symbol BEFORE attempting an ERC20 transfer or balance check if the address is not already known.
-Do not wait for transaction confirmation; simply report the transaction hash once submitted. Assume the RPC connection is to the correct network.
-Be concise in your responses.`;
+
+**Handling Sequences:** If a request involves multiple steps (e.g., check balances, perform a transfer, then check balances again), execute each step completely and sequentially. Use the results from one step before starting the next.
+
+**Reporting Results:** When reporting balances before and after a transaction, clearly state the initial balances for all relevant parties, then describe the action taken (e.g., transfer submitted), and finally state the updated balances clearly differentiating them from the initial ones. **Make sure your final text response to the user includes the results of the *last* step requested in the sequence.**
+
+You SHOULD wait for transaction confirmation and report the transaction hash and its final status after submitting the transaction. Assume the RPC connection is to the correct network.
+Be concise but clear in your responses.`;
 
     if (currentMessages.length === 0 || currentMessages[0].role !== 'system') {
         currentMessages.unshift({ role: 'system', content: systemPromptContent });
@@ -720,7 +720,7 @@ Be concise in your responses.`;
 
 
     // Add the new transcribed text as a user message
-    currentMessages.push({ role: 'user', content: transcribedText });
+    // currentMessages.push({ role: 'user', content: transcribedText });
 
     // Loop for agent turns and tool calls
     while (true) {

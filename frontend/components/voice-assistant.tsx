@@ -6,7 +6,6 @@ import { Mic, MicOff, Send, AudioWaveformIcon as Waveform, HelpCircle } from "lu
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/use-toast"
-import { processCryptoCommand } from "@/lib/command-processor"
 import { useMobile } from "@/hooks/use-mobile"
 import { motion, AnimatePresence } from "framer-motion"
 import VoiceVisualization from "./voice-visualization"
@@ -21,32 +20,26 @@ import {
   inputStyle,
   transitionStyle,
 } from "./ui-theme"
-
-type Message = {
-  role: "user" | "assistant"
-  content: string
-  timestamp: Date
-}
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions"
 
 export default function VoiceAssistant() {
   const [isListening, setIsListening] = useState(false)
   const [textInput, setTextInput] = useState("")
-  const [messages, setMessages] = useState<Message[]>([
+  const [messages, setMessages] = useState<ChatCompletionMessageParam[]>([
     {
       role: "assistant",
       content: "Hi there! I'm your crypto voice assistant. How can I help you?",
-      timestamp: new Date(),
     },
   ])
   const [showExamples, setShowExamples] = useState(true)
   const [isSpeechSupported, setIsSpeechSupported] = useState(false)
+  const [isProcessing, setIsProcessing] = useState(false)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const isMobile = useMobile()
   const recognitionRef = useRef<any>(null)
   const synthRef = useRef<SpeechSynthesis | null>(null)
 
-  // Check for speech recognition support
   useEffect(() => {
     if (typeof window !== "undefined") {
       const isSpeechRecognitionSupported =
@@ -57,13 +50,11 @@ export default function VoiceAssistant() {
 
       setIsSpeechSupported(isSpeechRecognitionSupported)
 
-      // Initialize speech synthesis
       if ("speechSynthesis" in window) {
         synthRef.current = window.speechSynthesis
       }
     }
 
-    // Cleanup
     return () => {
       stopListening()
       if (synthRef.current) {
@@ -72,17 +63,15 @@ export default function VoiceAssistant() {
     }
   }, [])
 
-  // Initialize speech recognition when supported
   useEffect(() => {
     if (!isSpeechSupported || recognitionRef.current) return
 
     try {
-      // Get the appropriate SpeechRecognition constructor
       const SpeechRecognition =
-        window.SpeechRecognition ||
-        window.webkitSpeechRecognition ||
-        window.mozSpeechRecognition ||
-        window.msSpeechRecognition
+        (window as any).SpeechRecognition ||
+        (window as any).webkitSpeechRecognition ||
+        (window as any).mozSpeechRecognition ||
+        (window as any).msSpeechRecognition
 
       if (SpeechRecognition) {
         recognitionRef.current = new SpeechRecognition()
@@ -90,7 +79,6 @@ export default function VoiceAssistant() {
         recognitionRef.current.interimResults = false
         recognitionRef.current.lang = "en-US"
 
-        // Set up event handlers
         recognitionRef.current.onresult = (event: any) => {
           const transcript = event.results[event.results.length - 1][0].transcript
           if (transcript.trim()) {
@@ -99,7 +87,6 @@ export default function VoiceAssistant() {
         }
 
         recognitionRef.current.onend = () => {
-          // Automatically stop listening when recognition ends
           setIsListening(false)
         }
 
@@ -107,7 +94,6 @@ export default function VoiceAssistant() {
           console.error("Speech recognition error", event.error)
           setIsListening(false)
 
-          // Handle specific error types
           if (event.error === "not-allowed") {
             toast({
               title: "Microphone Access Denied",
@@ -115,8 +101,6 @@ export default function VoiceAssistant() {
               variant: "destructive",
             })
           } else if (event.error === "aborted") {
-            // This is often triggered when the recognition is stopped unexpectedly
-            // We'll handle it silently to avoid showing unnecessary errors
             console.log("Speech recognition was aborted")
           } else {
             toast({
@@ -133,7 +117,6 @@ export default function VoiceAssistant() {
     }
   }, [isSpeechSupported])
 
-  // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom()
   }, [messages])
@@ -143,14 +126,7 @@ export default function VoiceAssistant() {
   }
 
   const startListening = () => {
-    if (!isSpeechSupported) {
-      toast({
-        title: "Not Supported",
-        description: "Voice recognition is not supported in your browser.",
-        variant: "destructive",
-      })
-      return
-    }
+    if (!isSpeechSupported || isProcessing) return
 
     if (!recognitionRef.current) {
       toast({
@@ -162,10 +138,8 @@ export default function VoiceAssistant() {
     }
 
     try {
-      // Reset recognition instance to avoid multiple instances running
       stopListening()
 
-      // Start after a short delay to ensure previous instance is fully stopped
       setTimeout(() => {
         try {
           recognitionRef.current.start()
@@ -216,7 +190,7 @@ export default function VoiceAssistant() {
 
   const speak = (text: string) => {
     if (synthRef.current) {
-      synthRef.current.cancel() // Stop any current speech
+      synthRef.current.cancel()
       const utterance = new SpeechSynthesisUtterance(text)
       utterance.lang = "en-US"
       utterance.rate = 1.0
@@ -226,48 +200,86 @@ export default function VoiceAssistant() {
   }
 
   const handleCommand = async (command: string) => {
-    // Add user message
-    const userMessage: Message = {
-      role: "user",
-      content: command,
-      timestamp: new Date(),
-    }
+    if (!command.trim() || isProcessing) return
 
-    setMessages((prev) => [...prev, userMessage])
+    setIsProcessing(true)
     setTextInput("")
 
+    const userMessageForApi: ChatCompletionMessageParam = {
+      role: "user",
+      content: command,
+    }
+
+    const historyToSend = [...messages, userMessageForApi]
+    setMessages(historyToSend)
+
     try {
-      // Process the command
-      const response = await processCryptoCommand(command)
+      console.log("Sending to API:", { text: command, history: historyToSend })
 
-      // Add assistant response
-      const assistantMessage: Message = {
-        role: "assistant",
-        content: response,
-        timestamp: new Date(),
+      const response = await fetch("/api/agent", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: command,
+          history: historyToSend,
+        }),
+      })
+
+      console.log("API Response Status:", response.status)
+
+      if (!response.ok) {
+        let errorData
+        try {
+          errorData = await response.json()
+          console.error("API Error Response Body:", errorData)
+        } catch (e) {
+          console.error("Failed to parse error response JSON")
+          errorData = { error: "Failed to process request.", details: await response.text() }
+        }
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`)
       }
 
-      setMessages((prev) => [...prev, assistantMessage])
+      const data = await response.json()
+      const updatedHistory: ChatCompletionMessageParam[] = data.history
 
-      // Speak the response
-      speak(response)
-    } catch (error) {
-      const errorMessage: Message = {
-        role: "assistant",
-        content: "Sorry, I couldn't process that command. Please try again.",
-        timestamp: new Date(),
+      console.log("Received Updated History:", updatedHistory)
+
+      setMessages(updatedHistory)
+
+      const lastAssistantMessage = updatedHistory
+        .slice()
+        .reverse()
+        .find((msg) => msg.role === "assistant")
+
+      if (lastAssistantMessage?.content && typeof lastAssistantMessage.content === 'string') {
+        speak(lastAssistantMessage.content)
+      } else {
+        console.log("No speakable assistant message content found or content is not a string:", lastAssistantMessage?.content)
       }
-
-      setMessages((prev) => [...prev, errorMessage])
-      speak(errorMessage.content)
+    } catch (error: any) {
+      console.error("Error calling agent API:", error)
+      const errorMessageContent = `Error: ${error.message || "Failed to communicate with the assistant."}`
+      const errorMessageForApi: ChatCompletionMessageParam = {
+        role: "assistant",
+        content: errorMessageContent,
+      }
+      setMessages((prev) => [...prev, errorMessageForApi])
+      speak(errorMessageContent)
+      toast({
+        title: "API Error",
+        description: errorMessageContent,
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
     }
   }
 
   const handleTextSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (textInput.trim()) {
-      handleCommand(textInput)
-    }
+    handleCommand(textInput)
   }
 
   const handleExampleSelect = (command: string) => {
@@ -285,7 +297,18 @@ export default function VoiceAssistant() {
 
           <div className="flex items-center gap-2">
             <AnimatePresence>
-              {isListening && (
+              {isProcessing && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  transition={{ duration: 0.3 }}
+                  className="h-5 w-5"
+                >
+                  <div className="animate-spin rounded-full h-full w-full border-b-2 border-teal-500"></div>
+                </motion.div>
+              )}
+              {isListening && !isProcessing && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
@@ -312,24 +335,38 @@ export default function VoiceAssistant() {
         <div className="flex flex-col h-[350px]">
           <div className="flex-1 overflow-y-auto mb-4 space-y-4 pr-2">
             <AnimatePresence initial={false}>
-              {messages.map((message, index) => (
+              {messages
+                 .filter(message => {
+                    if (message.role === 'user') {
+                       return true;
+                    }
+                    if (message.role === 'assistant') {
+                       const hasTextContent = typeof message.content === 'string' && message.content.trim() !== '';
+                       const hasToolCalls = !!(message as any).tool_calls && Array.isArray((message as any).tool_calls) && (message as any).tool_calls.length > 0;
+                       return hasTextContent || !hasToolCalls;
+                    }
+                    return false;
+                 })
+                 .map((message, index) => (
                 <motion.div
-                  key={index}
+                  key={`${message.role}-${index}`}
                   initial={{ opacity: 0, y: 20, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ duration: 0.3, type: "spring", stiffness: 100 }}
                   className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[80%] rounded-md px-4 py-2 ${
+                    className={`max-w-[80%] rounded-lg px-4 py-2 shadow-sm ${
                       message.role === "user"
                         ? "bg-teal-500 text-white"
                         : "bg-slate-100 text-slate-800 border border-slate-200"
                     }`}
                   >
-                    <p className="text-[15px]">{message.content}</p>
-                    <p className="text-xs opacity-70 mt-1">
-                      {message.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    <p className="text-[15px] whitespace-pre-wrap">
+                       {typeof message.content === 'string'
+                          ? message.content
+                          : '[non-text content]'
+                       }
                     </p>
                   </div>
                 </motion.div>
@@ -359,9 +396,13 @@ export default function VoiceAssistant() {
               size="icon"
               className={`shrink-0 rounded-md ${
                 isListening ? "bg-rose-500 hover:bg-rose-600" : "bg-teal-500 hover:bg-teal-600"
-              } ${!isSpeechSupported ? "opacity-50 cursor-not-allowed" : ""} ${transitionStyle}`}
-              disabled={!isSpeechSupported}
-              title={isSpeechSupported ? "Toggle voice input" : "Voice recognition not supported in this browser"}
+              } ${!isSpeechSupported || isProcessing ? "opacity-50 cursor-not-allowed" : ""} ${transitionStyle}`}
+              disabled={!isSpeechSupported || isProcessing}
+              title={
+                 isProcessing ? "Processing..." :
+                 isSpeechSupported ? (isListening ? "Stop listening" : "Start listening") :
+                 "Voice recognition not supported"
+              }
             >
               {isListening ? <MicOff size={18} /> : <Mic size={18} />}
             </Button>
@@ -369,11 +410,17 @@ export default function VoiceAssistant() {
             <Input
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder="Type your command..."
+              placeholder={isProcessing ? "Processing..." : "Type or say your command..."}
               className={`bg-white ${inputStyle}`}
+              disabled={isProcessing}
             />
 
-            <Button type="submit" size="icon" className={`shrink-0 rounded-md ${primaryButtonStyle}`}>
+            <Button
+               type="submit"
+               size="icon"
+               className={`shrink-0 rounded-md ${primaryButtonStyle}`}
+               disabled={isProcessing || !textInput.trim()}
+            >
               <Send size={18} />
             </Button>
           </form>
