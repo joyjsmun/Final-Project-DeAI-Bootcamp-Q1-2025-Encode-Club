@@ -51,8 +51,19 @@ This project implements a voice-first interface for cryptocurrency operations, m
 - [Text to Speech](https://platform.openai.com/docs/guides/text-to-speech) using OpenAI gpt-4o-mini-tts
 
 ### Blockchain Integration
-- [Goat SDK](https://github.com/goat-sdk) for Web3 functionality
-- 
+- Ethers.js for blockchain interactions
+- OpenAI for intelligent transaction processing
+- Local Hardhat node for development and testing
+
+### Development Environment
+- **Local Node**: Run a local Ethereum node for development
+  ```bash
+  npm run start-node
+  ```
+- **Chat Agent**: Interact with the agent via command line
+  ```bash
+  npm run chat-agent
+  ```
 
 
 ## Contributors
