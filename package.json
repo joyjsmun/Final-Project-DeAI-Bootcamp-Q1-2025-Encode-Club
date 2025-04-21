@@ -1,5 +1,9 @@
 {
   "dependencies": {
     "date-fns": "^2.29.3"
+  },
+  "scripts": {
+    "start-node": "npm run start-node --prefix web3-agent",
+    "chat-agent": "npm run chat --prefix web3-agent"
   }
 }
