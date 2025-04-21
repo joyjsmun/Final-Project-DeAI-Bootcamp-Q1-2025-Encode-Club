@@ -59,14 +59,20 @@
     "vaul": "^0.9.6",
     "zod": "^3.24.1",
     "@emotion/is-prop-valid": "latest",
-    "framer-motion": "latest"
+    "framer-motion": "latest",
+    "dotenv": "^16.5.0",
+    "openai": "^4.95.1"
   },
   "devDependencies": {
-    "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
-    "typescript": "^5"
+    "@types/dotenv": "^8.2.3",
+    "@types/node": "^22.14.1",
+    "ethers": "^6.13.5",
+    "nodemon": "^3.1.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
   }
 }
