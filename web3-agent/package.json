@@ -1,0 +1,33 @@
+{
+  "name": "deai-speech-to-onchain-transaction",
+  "version": "1.0.0",
+  "description": "",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "nodemon --watch src --exec ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "start-node": "ts-node scripts/start-node.ts",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "chat": "ts-node src/index.ts --chat"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^3.0.8",
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.3.0",
+    "@types/dotenv": "^8.2.3",
+    "@types/node": "^22.14.1",
+    "ethers": "^6.13.5",
+    "hardhat": "^2.23.0",
+    "nodemon": "^3.1.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "openai": "^4.95.1"
+  }
+}
