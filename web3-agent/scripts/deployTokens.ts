@@ -16,7 +16,7 @@ async function main() {
 
   // --- Deploy WETH ---
   console.log("\nDeploying WETH...");
-  const weth = await SimpleERC20.deploy("Wrapped Ether", "WETH", deployer.address);
+  const weth = await SimpleERC20.deploy("Wrapped Ether", "WETH", 18, deployer.address);
   // await weth.deployed(); // deprecated in ethers v6
   await weth.waitForDeployment(); // Use waitForDeployment instead
   const wethAddress = await weth.getAddress();
@@ -24,7 +24,7 @@ async function main() {
 
   // --- Deploy USDC ---
   console.log("\nDeploying USDC...");
-  const usdc = await SimpleERC20.deploy("USD Coin", "USDC", deployer.address);
+  const usdc = await SimpleERC20.deploy("USD Coin", "USDC", 6, deployer.address);
   // await usdc.deployed(); // deprecated in ethers v6
   await usdc.waitForDeployment(); // Use waitForDeployment instead
   const usdcAddress = await usdc.getAddress();
@@ -39,8 +39,8 @@ async function main() {
   await tx.wait();
   console.log("WETH minted successfully. Transaction hash:", tx.hash);
 
-  console.log(`\nMinting ${ethers.formatUnits(usdcAmount, 6)} USDC to Account #1 (${account1.address})...`);
-  tx = await usdc.mint(account1.address, usdcAmount);
+  console.log(`\nMinting ${ethers.formatUnits(usdcAmount, 6)} USDC to Account #0 (${deployer.address})...`);
+  tx = await usdc.mint(deployer.address, usdcAmount);
   await tx.wait();
   console.log("USDC minted successfully. Transaction hash:", tx.hash);
 
@@ -48,7 +48,7 @@ async function main() {
   console.log("WETH Contract Address:", wethAddress);
   console.log("USDC Contract Address:", usdcAddress);
   console.log(`Account #0 (${deployer.address}) WETH Balance:`, ethers.formatUnits(await weth.balanceOf(deployer.address), 18));
-  console.log(`Account #1 (${account1.address}) USDC Balance:`, ethers.formatUnits(await usdc.balanceOf(account1.address), 6));
+  console.log(`Account #0 (${deployer.address}) USDC Balance:`, ethers.formatUnits(await usdc.balanceOf(deployer.address), 6));
   console.log("--------------------------");
 }
 
