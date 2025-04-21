@@ -481,7 +481,7 @@ async function executeAgentTurn(
     try {
         console.log("🔄 Calling OpenAI..."); // Added log
         const response = await openai.chat.completions.create({
-            model: 'gpt-4o-mini', // Or your preferred model
+            model: 'gpt-o4-nano', // Or your preferred model
             messages,
             tools,
             tool_choice: 'auto',

@@ -10,3 +10,5 @@ dist/
 
 # Ignore OS files
 .DS_Store 
+
+.next
