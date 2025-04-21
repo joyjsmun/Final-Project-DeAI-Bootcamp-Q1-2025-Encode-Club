@@ -456,7 +456,156 @@ async function handleLookupAddressByName(args: { name: string }) {
   return { name: match, address: addressBook[match] };
 }
 
-// --- Main Execution Function (Tool Chaining) ---
+// --- Refactored Agent Interaction Logic ---
+
+interface AgentTurnResult {
+    assistantMessage: OpenAI.Chat.Completions.ChatCompletionMessage;
+    toolMessages?: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+    performedAction?: boolean; // Indicates if a state-changing action (e.g., transfer) occurred
+    error?: string; // Optional error message from the turn
+}
+
+/**
+ * Executes one turn of interaction with the OpenAI agent.
+ * Sends current messages, processes response (text or tool calls), executes tools if needed.
+ * @param messages The current conversation history.
+ * @param tools The available tools for the agent.
+ * @param openai The OpenAI client instance.
+ * @returns An object containing the assistant's message, any tool messages, and a flag indicating if an action was performed.
+ */
+async function executeAgentTurn(
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+    tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+    openai: OpenAI
+): Promise<AgentTurnResult> {
+    try {
+        console.log("🔄 Calling OpenAI..."); // Added log
+        const response = await openai.chat.completions.create({
+            model: 'gpt-4o-mini', // Or your preferred model
+            messages,
+            tools,
+            tool_choice: 'auto',
+        });
+        console.log("🔍 OpenAI response received."); // Added log
+
+        const choice = response.choices[0];
+        const assistantMessage = choice.message;
+
+        if (!assistantMessage.tool_calls) {
+            // No tool calls, just a text response (or empty response)
+            if (assistantMessage.content) {
+                console.log('💬 Agent:', assistantMessage.content); // Changed log prefix
+            } else {
+                 console.log(' Agent: (No response or finished)'); // Changed log prefix
+            }
+            return { assistantMessage };
+        }
+
+        // Process tool calls
+        const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+        let performedAction = false;
+        let turnError: string | undefined = undefined;
+
+        console.log('🛠️ Assistant requested tool calls:');
+        for (const toolCall of assistantMessage.tool_calls) {
+            const functionName = toolCall.function.name;
+            let functionArgs: any;
+            try {
+                functionArgs = JSON.parse(toolCall.function.arguments);
+            } catch (parseError) {
+                 const errorMsg = `Failed to parse arguments for ${functionName}: ${parseError instanceof Error ? parseError.message : String(parseError)}`;
+                 console.error(`❌ ${errorMsg}`);
+                 toolMessages.push({
+                    role: 'tool',
+                    tool_call_id: toolCall.id,
+                    content: JSON.stringify({ error: errorMsg }),
+                 });
+                 if (turnError) turnError += `; ${errorMsg}`; else turnError = errorMsg;
+                 continue; // Skip to next tool call if args are invalid
+            }
+
+            console.log(`   📞 Calling Function: ${functionName}`); // Changed log
+            console.log('     Arguments:', functionArgs);
+
+            let toolResult: any;
+            try {
+                switch (functionName) {
+                    case 'lookupAddressByName':
+                        toolResult = await handleLookupAddressByName(functionArgs);
+                        // Lookups don't count as the primary "action"
+                        break;
+                    case 'sendERC20Transfer':
+                        toolResult = await handleSendErc20Transfer(functionArgs);
+                        performedAction = true; // This is a state-changing action
+                        break;
+                    case 'getEthBalance':
+                        toolResult = await handleGetEthBalance(functionArgs);
+                        // Balance checks could optionally be considered actions if needed
+                        break;
+                    case 'getErc20Balance':
+                        toolResult = await handleGetErc20Balance(functionArgs);
+                        break;
+                    case 'sendEthTransfer':
+                        toolResult = await handleSendEthTransfer(functionArgs);
+                        performedAction = true; // State-changing action
+                        break;
+                    case 'getTokenAddress':
+                        toolResult = await handleGetTokenAddress(functionArgs);
+                        break;
+                    default:
+                        console.warn(`⚠️ Unknown function call requested: ${functionName}`);
+                        toolResult = { error: `Unknown function: ${functionName}` };
+                        // Decide if unknown function halts (might set performedAction = true or throw)
+                }
+
+                // Log errors from tool execution if any, and add to turnError
+                 if (toolResult && toolResult.error) {
+                     const toolErrorMsg = `Error executing tool ${functionName}: ${toolResult.error}`;
+                     console.error(`❌ ${toolErrorMsg}`); // Log error clearly
+                     if (turnError) turnError += `; ${toolErrorMsg}`; else turnError = toolErrorMsg;
+                 } else {
+                     // Log success slightly differently for clarity
+                     if(functionName === 'lookupAddressByName' && !toolResult.error){
+                         console.log(`✅ Tool ${functionName} Result: Found ${toolResult.name} -> ${toolResult.address}`);
+                     } else if (functionName === 'getTokenAddress' && !toolResult.error){
+                          console.log(`✅ Tool ${functionName} Result: ${toolResult.symbol} -> ${toolResult.address}`);
+                     } else if (!toolResult.error) {
+                         console.log(`✅ Tool ${functionName} executed (see specific handler logs for details). Result keys:`, Object.keys(toolResult));
+                     }
+                 }
+
+            } catch (error) {
+                const errorMessage = `Internal error executing tool ${functionName}: ${error instanceof Error ? error.message : String(error)}`;
+                console.error(`❌ Unexpected error calling handler for ${functionName}:`, error);
+                toolResult = { error: errorMessage };
+                if (turnError) turnError += `; ${errorMessage}`; else turnError = errorMessage;
+            }
+
+            // Ensure content is always a string, even if toolResult is undefined/null
+            const resultContent = JSON.stringify(toolResult ?? { status: 'Tool executed, no data returned.' });
+            toolMessages.push({
+                role: 'tool',
+                tool_call_id: toolCall.id,
+                content: resultContent,
+            });
+            console.log(`   📦 Tool Result (${functionName}): ${resultContent}`); // Log result being sent back
+        }
+
+        return { assistantMessage, toolMessages, performedAction, error: turnError };
+
+    } catch (error) {
+        console.error('❌ Error calling OpenAI API:', error);
+        // Return an error structure that can be handled by the calling loop
+        const errorMessage = `Failed to get response from OpenAI: ${error instanceof Error ? error.message : String(error)}`;
+        return {
+             // Provide a dummy assistant message to avoid breaking message structure
+             assistantMessage: { role: 'assistant', content: `Error: ${errorMessage}` } as OpenAI.Chat.Completions.ChatCompletionMessage,
+             error: errorMessage,
+        };
+    }
+}
+
+// --- Main Execution Function (Tool Chaining - Refactored) ---
 async function processTransactionInstruction(instruction: string) {
   console.log(`========================================`);
   console.log(`Processing instruction: "${instruction}"`);
@@ -472,125 +621,48 @@ Whenever the user refers to "me", "myself", or "my" in the context of an address
 
 Use the \`getTokenAddress\` tool if you need the contract address for a specific token symbol BEFORE attempting an ERC20 transfer or balance check if the address is not already known.
 `;
+  const tools = [ // Define tools available for this function
+      lookupAddressByNameSchema,
+      sendErc20TransferSchema,
+      getEthBalanceSchema,
+      getErc20BalanceSchema,
+      sendEthTransferSchema,
+      getTokenAddressSchema,
+  ];
   let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: 'system', content: systemPrompt },
     { role: 'user', content: instruction },
   ];
 
   while (true) {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages,
-      tools: [
-        lookupAddressByNameSchema,
-        sendErc20TransferSchema,
-        getEthBalanceSchema,
-        getErc20BalanceSchema,
-        sendEthTransferSchema,
-        getTokenAddressSchema,
-      ],
-      tool_choice: 'auto',
-    });
-    const choice = response.choices[0];
-    const assistantMessage = choice.message; // Store the assistant's message
+    const turnResult = await executeAgentTurn(messages, tools, openai);
 
-    if (!assistantMessage.tool_calls) {
-      if (assistantMessage.content) {
-        console.log('ℹ️ OpenAI Response:');
-        console.log(`   ${assistantMessage.content}`);
-      } else {
-        // If no tool calls and no content, it might be an issue or just completion.
-        console.log('ℹ️ OpenAI finished without further action or message.');
-      }
-      // If there are no tool calls, we assume the process is complete or the agent responded textually.
-      return; // Exit the function
+    // Add the assistant's response (potentially with tool call requests) to history
+    messages.push(turnResult.assistantMessage);
+
+    if (turnResult.error && !turnResult.toolMessages?.length) {
+         console.error("Halting due to error during agent turn (before tool execution):", turnResult.error);
+         break; // Stop processing if a critical error occurred before tool execution
     }
 
-    // Add the assistant message (with tool_calls) to the history *before* processing tools
-    messages.push(assistantMessage);
-
-    const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-    let performedAction = false; // Flag to check if a non-lookup action was done
-
-    console.log('🛠️ Assistant requested tool calls:');
-    for (const toolCall of assistantMessage.tool_calls) {
-      const functionName = toolCall.function.name;
-      const functionArgs = JSON.parse(toolCall.function.arguments);
-      console.log('   - Function:', functionName);
-      console.log('     Arguments:', functionArgs);
-
-      let toolResult: any;
-
-      try {
-        switch (functionName) {
-          case 'lookupAddressByName':
-            toolResult = await handleLookupAddressByName(functionArgs);
-            // Do not set performedAction = true for lookups
-            break;
-          case 'sendERC20Transfer':
-            toolResult = await handleSendErc20Transfer(functionArgs);
-            performedAction = true;
-            break;
-          case 'getEthBalance':
-            toolResult = await handleGetEthBalance(functionArgs);
-            // Balance checks might not be considered the final 'action' depending on flow
-            // Let's assume for now they don't stop the chain unless explicitly designed so.
-            // performedAction = true; // Optionally set this if balance checks should end the sequence
-            break;
-          case 'getErc20Balance':
-            toolResult = await handleGetErc20Balance(functionArgs);
-            // performedAction = true; // Optionally set this
-            break;
-          case 'sendEthTransfer':
-            toolResult = await handleSendEthTransfer(functionArgs);
-            performedAction = true;
-            break;
-          case 'getTokenAddress':
-            toolResult = await handleGetTokenAddress(functionArgs);
-            // performedAction = true; // Optionally set this
-            break;
-          default:
-            console.warn(`⚠️ Unknown function call requested: ${functionName}`);
-            toolResult = { error: `Unknown function: ${functionName}` };
-            // Decide if an unknown function call should halt the process
-            // performedAction = true;
-        }
-
-        // Log errors from tool execution if any
-        if (toolResult && toolResult.error) {
-             console.error(`❌ Error executing tool ${functionName}:`, toolResult.error);
-        }
-
-      } catch (error) {
-          console.error(`❌ Unexpected error calling handler for ${functionName}:`, error);
-          toolResult = { error: `Internal error executing tool ${functionName}: ${error instanceof Error ? error.message : String(error)}` };
-      }
-
-
-      // Add the tool result message
-      toolMessages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: JSON.stringify(toolResult),
-      });
-    }
-
-    // Add all tool results to the messages array
-    messages.push(...toolMessages);
-
-    // If a significant action (like sending tokens) was performed, exit the loop.
-    // Otherwise, continue to let the agent process the results (e.g., use the looked-up address).
-    if (performedAction) {
-      console.log('✅ Action performed, concluding instruction processing.');
-      break; // Exit the while loop
+    if (turnResult.toolMessages && turnResult.toolMessages.length > 0) {
+      // Add tool results to history and continue the loop for the agent to process them
+      messages.push(...turnResult.toolMessages);
+       console.log('🔌 Feeding tool results back to agent...');
+       if (turnResult.performedAction) {
+           console.log('✅ Action performed, concluding instruction processing.');
+           break; // Exit if a state-changing action was performed
+       }
+        // Continue loop if only lookups or non-action tools were called
     } else {
-       console.log('🔍 Continuing loop after processing tool results (likely lookups).');
-       // Continue loop for potential follow-up calls from the agent
+      // No tool calls in the response, the conversation turn is complete from the agent's side.
+       console.log("✅ Agent finished processing this instruction.");
+      break; // Exit the loop
     }
   }
   // Final log message after loop finishes or breaks
   console.log(`========================================`);
-  console.log(`Finished processing instruction.`);
+  console.log(`Finished processing instruction: "${instruction}"`);
   console.log(`========================================`);
 }
 
@@ -662,7 +734,7 @@ async function runExamples() {
 
 }
 
-// --- Interactive Terminal Chat ---
+// --- Interactive Terminal Chat (Refactored) ---
 async function interactiveChat() {
     const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
     const selfAddress = wallet.address;
@@ -677,7 +749,7 @@ Use the \`getTokenAddress\` tool if you need the contract address for a specific
     let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: 'system', content: systemPrompt },
     ];
-    const tools = [
+    const tools = [ // Tools available in interactive mode
         lookupAddressByNameSchema,
         sendErc20TransferSchema,
         getEthBalanceSchema,
@@ -688,106 +760,160 @@ Use the \`getTokenAddress\` tool if you need the contract address for a specific
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
-        prompt: '\nYou: '
+        prompt: '\nYou: ' // Prompt for user input
     });
     console.log('--- Interactive Ethereum Chat ---');
     console.log('Type your prompt and press Enter. Press Ctrl+C to exit.');
-    rl.prompt();
+    rl.prompt(); // Show initial prompt
+
     rl.on('SIGINT', () => {
         console.log('\nExiting chat.');
         rl.close();
         process.exit(0);
     });
+
     for await (const line of rl) {
         const input = line.trim();
         if (!input) {
-            rl.prompt();
+            rl.prompt(); // Re-prompt if empty line entered
             continue;
         }
-        messages.push({ role: 'user', content: input });
-        let localMessages = [...messages];
+        messages.push({ role: 'user', content: input }); // Add user input to history
+
+        // Process the user input, allowing for multiple agent/tool turns if needed
         while (true) {
-            const response = await openai.chat.completions.create({
-                model: 'gpt-4o-mini',
-                messages: localMessages,
-                tools,
-                tool_choice: 'auto',
-            });
-            const choice = response.choices[0];
-            if (!choice.message.tool_calls) {
-                if (choice.message.content) {
-                    console.log(`Agent: ${choice.message.content}`);
-                    messages.push({ role: 'assistant', content: choice.message.content });
-                } else {
-                    console.log('Agent: (No response)');
-                }
-                break;
+             console.log("Processing your request..."); // Indicate processing start
+            const turnResult = await executeAgentTurn(messages, tools, openai);
+
+            // Add assistant message (requesting tools or final response)
+            messages.push(turnResult.assistantMessage);
+
+            if (turnResult.error && !turnResult.toolMessages?.length) {
+                 console.error("Agent turn failed before tool execution:", turnResult.error);
+                 // Break the inner loop, agent failed before acting
+                 break;
             }
-            // Handle multiple tool calls
-            const toolMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
-            for (const toolCall of choice.message.tool_calls) {
-                const functionName = toolCall.function.name;
-                const functionArgs = JSON.parse(toolCall.function.arguments);
-                let toolResult: any = undefined;
-                if (functionName === 'lookupAddressByName') {
-                    toolResult = await handleLookupAddressByName(functionArgs);
-                    if (toolResult.error) {
-                        console.log('Agent:', toolResult.error);
-                        // Still send the error to the agent
-                    }
-                } else if (functionName === 'getTokenAddress') {
-                    toolResult = await handleGetTokenAddress(functionArgs);
-                    if (toolResult.error) {
-                        console.log(`(Tool) Error: ${toolResult.error}`);
-                    } else {
-                        console.log(`(Tool) Address for ${toolResult.symbol}: ${toolResult.address}`);
-                    }
-                } else {
-                    switch (functionName) {
-                        case 'sendERC20Transfer':
-                            toolResult = await handleSendErc20Transfer(functionArgs);
-                            if (toolResult.error) {
-                                console.log(`(Tool) Error: ${toolResult.error}`);
-                            }
-                            break;
-                        case 'getEthBalance':
-                            toolResult = await handleGetEthBalance(functionArgs);
-                            if (!toolResult.error) {
-                                console.log(`(Tool) ETH Balance for ${toolResult.address}: ${toolResult.balance} ETH`);
-                            }
-                            break;
-                        case 'getErc20Balance':
-                            toolResult = await handleGetErc20Balance(functionArgs);
-                            if (!toolResult.error) {
-                                console.log(`(Tool) ${toolResult.symbol} Balance for ${toolResult.address}: ${toolResult.balance} ${toolResult.symbol}`);
-                            }
-                            break;
-                        case 'sendEthTransfer':
-                            toolResult = await handleSendEthTransfer(functionArgs);
-                            if (toolResult.error) {
-                                console.log(`(Tool) Error: ${toolResult.error}`);
-                            }
-                            break;
-                        default:
-                            console.log(`Agent: Unknown function call requested: ${functionName}`);
-                            toolResult = { error: `Unknown function: ${functionName}` };
-                    }
-                }
-                toolMessages.push({
-                    role: 'tool',
-                    tool_call_id: toolCall.id,
-                    content: JSON.stringify(toolResult),
-                });
+
+            if (turnResult.toolMessages && turnResult.toolMessages.length > 0) {
+                // Add tool results and let the agent process them in the next iteration
+                messages.push(...turnResult.toolMessages);
+                console.log(" Agent is processing tool results..."); // Inform user
+                // The loop continues automatically to call executeAgentTurn again
+                 continue;
+            } else {
+                // No more tool calls needed for this user input.
+                 console.log(" Agent finished responding to this request.");
+                 break; // Break the inner while loop to wait for next user input
             }
-            localMessages.push(choice.message, ...toolMessages);
-            // Continue the loop to let OpenAI use the tool results in the next tool call or to generate a final response
         }
+        // Inner loop finished, prompt for the next user input
         rl.prompt();
     }
 }
 
-// Execute examples or interactive chat if the script is run directly 
+// --- HOW TO USE WITH SPEECH-TO-TEXT ---
+
+/**
+ * Example of how you would integrate your transcribed text.
+ * This function encapsulates processing a single text input within an ongoing conversation.
+ *
+ * @param transcribedText The text obtained from your speech-to-text engine.
+ * @param currentMessages The current conversation history array. It will be modified in place.
+ * @returns The updated conversation history array.
+ */
+async function processTranscribedText(
+    transcribedText: string,
+    currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] // Expects history
+): Promise<OpenAI.Chat.Completions.ChatCompletionMessageParam[]> {
+    console.log(`Processing transcribed text: "${transcribedText}"`);
+
+    const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+    // System prompt is assumed to be the first message in currentMessages
+    const tools = [ // Define tools available here too
+        lookupAddressByNameSchema,
+        sendErc20TransferSchema,
+        getEthBalanceSchema,
+        getErc20BalanceSchema,
+        sendEthTransferSchema,
+        getTokenAddressSchema,
+    ];
+
+    // Add the new transcribed text as a user message to the existing history
+    currentMessages.push({ role: 'user', content: transcribedText });
+
+    // This loop mimics the core logic used in interactiveChat
+    while (true) {
+        console.log("Processing transcribed input...");
+        const turnResult = await executeAgentTurn(currentMessages, tools, openai);
+
+        // Add assistant's response to history
+        currentMessages.push(turnResult.assistantMessage);
+
+        if (turnResult.error && !turnResult.toolMessages?.length) {
+             console.error("Halting transcription processing due to error:", turnResult.error);
+             break; // Exit loop on critical error
+        }
+
+        if (turnResult.toolMessages && turnResult.toolMessages.length > 0) {
+            // Add tool results and continue loop for agent processing
+            currentMessages.push(...turnResult.toolMessages);
+            console.log(' Agent processing tool results from transcription...');
+             continue; // Let agent process tool results
+        } else {
+            // No tool calls, final response for this input received
+            console.log(" Agent finished processing the transcribed text input.");
+            break; // Exit loop for this input
+        }
+    }
+
+    console.log("--- Finished processing transcribed text input ---");
+    // Return the updated history
+    return currentMessages;
+}
+
+// Example setup for using processTranscribedText sequentially
+/*
+async function runTranscriptionExample() {
+    const selfAddress = wallet.address;
+    const systemPrompt = `
+You are an assistant that helps with Ethereum transactions... (Full prompt)
+`;
+    // Initialize conversation history
+    let conversationHistory: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+        { role: 'system', content: systemPrompt }
+    ];
+
+    // --- Simulate receiving transcribed text ---
+
+    // First utterance
+    const firstText = "What's the address for WETH?";
+    console.log("\n--- STT Input 1 ---");
+    conversationHistory = await processTranscribedText(firstText, conversationHistory);
+    console.log("History after 1st input:", conversationHistory.slice(-3)); // Show recent history
+
+    // Second utterance
+    const secondText = "Okay now send 0.01 of it to Bob";
+    console.log("\n--- STT Input 2 ---");
+    conversationHistory = await processTranscribedText(secondText, conversationHistory);
+    console.log("History after 2nd input:", conversationHistory.slice(-4)); // Show recent history
+
+     // Third utterance
+    const thirdText = "What is my USDC balance?";
+    console.log("\n--- STT Input 3 ---");
+    conversationHistory = await processTranscribedText(thirdText, conversationHistory);
+    console.log("History after 3rd input:", conversationHistory.slice(-3));
+}
+*/
+
+// --- Entry Point Logic ---
 if (require.main === module) {
+    // Uncomment below to run the transcription example instead of examples/chat
+    // runTranscriptionExample().catch(err => {
+    //      console.error("Unhandled error in runTranscriptionExample:", err);
+    //      process.exit(1);
+    // });
+
+    // Default behavior: run examples or interactive chat
     if (process.argv.includes('--chat')) {
         interactiveChat().catch(err => {
             console.error("Unhandled error in interactiveChat:", err);
