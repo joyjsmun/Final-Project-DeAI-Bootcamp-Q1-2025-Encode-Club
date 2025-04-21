@@ -12,3 +12,8 @@ dist/
 .DS_Store 
 
 .next
+
+# Local Environment Variables
+.env*.local
+
+# Log files
