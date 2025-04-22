@@ -34,88 +34,98 @@ export default function VoiceAssistant() {
   const [showExamples, setShowExamples] = useState(true)
   const [isSpeechSupported, setIsSpeechSupported] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const isMobile = useMobile()
-  const recognitionRef = useRef<any>(null)
-  const synthRef = useRef<SpeechSynthesis | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const isSpeechRecognitionSupported =
-        "SpeechRecognition" in window ||
-        "webkitSpeechRecognition" in window ||
-        "mozSpeechRecognition" in window ||
-        "msSpeechRecognition" in window
-
-      setIsSpeechSupported(isSpeechRecognitionSupported)
-
-      if ("speechSynthesis" in window) {
-        synthRef.current = window.speechSynthesis
-      }
-    }
-
-    return () => {
-      stopListening()
-      if (synthRef.current) {
-        synthRef.current.cancel()
-      }
+      const isMediaRecorderSupported = "MediaRecorder" in window
+      setIsSpeechSupported(isMediaRecorderSupported)
     }
   }, [])
 
-  useEffect(() => {
-    if (!isSpeechSupported || recognitionRef.current) return
+  const startListening = async () => {
+    if (!isSpeechSupported || isProcessing) return
 
     try {
-      const SpeechRecognition =
-        (window as any).SpeechRecognition ||
-        (window as any).webkitSpeechRecognition ||
-        (window as any).mozSpeechRecognition ||
-        (window as any).msSpeechRecognition
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mediaRecorder = new MediaRecorder(stream)
+      mediaRecorderRef.current = mediaRecorder
+      audioChunksRef.current = []
 
-      if (SpeechRecognition) {
-        recognitionRef.current = new SpeechRecognition()
-        recognitionRef.current.continuous = false
-        recognitionRef.current.interimResults = false
-        recognitionRef.current.lang = "en-US"
-
-        recognitionRef.current.onresult = (event: any) => {
-          const transcript = event.results[event.results.length - 1][0].transcript
-          if (transcript.trim()) {
-            handleCommand(transcript)
-          }
-        }
-
-        recognitionRef.current.onend = () => {
-          setIsListening(false)
-        }
-
-        recognitionRef.current.onerror = (event: any) => {
-          console.error("Speech recognition error", event.error)
-          setIsListening(false)
-
-          if (event.error === "not-allowed") {
-            toast({
-              title: "Microphone Access Denied",
-              description: "Please allow microphone access to use voice commands.",
-              variant: "destructive",
-            })
-          } else if (event.error === "aborted") {
-            console.log("Speech recognition was aborted")
-          } else {
-            toast({
-              title: "Voice Recognition Error",
-              description: "There was an issue with voice recognition. Please try again or use text input.",
-              variant: "destructive",
-            })
-          }
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data)
         }
       }
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        setAudioBlob(audioBlob)
+        await handleAudioTranscription(audioBlob)
+      }
+
+      mediaRecorder.start()
+      setIsListening(true)
+      toast({
+        title: "Listening...",
+        description: "Speak your command clearly.",
+      })
     } catch (error) {
-      console.error("Failed to initialize speech recognition:", error)
-      setIsSpeechSupported(false)
+      console.error("Failed to start recording:", error)
+      setIsListening(false)
+      toast({
+        title: "Error",
+        description: "Failed to access microphone. Please check permissions.",
+        variant: "destructive",
+      })
     }
-  }, [isSpeechSupported])
+  }
+
+  const stopListening = () => {
+    if (mediaRecorderRef.current && isListening) {
+      mediaRecorderRef.current.stop()
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop())
+      setIsListening(false)
+    }
+  }
+
+  const handleAudioTranscription = async (audioBlob: Blob) => {
+    if (!audioBlob) return
+
+    setIsProcessing(true)
+    const formData = new FormData()
+    formData.append('audio', audioBlob, 'audio.webm')
+
+    try {
+      const response = await fetch('/api/voice-to-text', {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to transcribe audio')
+      }
+
+      const { transcription } = await response.json()
+      if (transcription) {
+        handleCommand(transcription)
+      }
+    } catch (error) {
+      console.error("Error transcribing audio:", error)
+      toast({
+        title: "Transcription Error",
+        description: "Failed to transcribe audio. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
 
   useEffect(() => {
     scrollToBottom()
@@ -125,77 +135,36 @@ export default function VoiceAssistant() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
-  const startListening = () => {
-    if (!isSpeechSupported || isProcessing) return
-
-    if (!recognitionRef.current) {
-      toast({
-        title: "Initialization Error",
-        description: "Voice recognition failed to initialize. Please refresh the page.",
-        variant: "destructive",
-      })
-      return
-    }
-
+  const speak = async (text: string) => {
     try {
-      stopListening()
+      const response = await fetch('/api/text-to-voice', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
 
-      setTimeout(() => {
-        try {
-          recognitionRef.current.start()
-          setIsListening(true)
-          toast({
-            title: "Listening...",
-            description: "Speak your command clearly.",
-          })
-        } catch (error) {
-          console.error("Failed to start speech recognition:", error)
-          setIsListening(false)
-          toast({
-            title: "Error",
-            description: "Failed to start voice recognition. Please try again.",
-            variant: "destructive",
-          })
-        }
-      }, 100)
-    } catch (error) {
-      console.error("Failed to start speech recognition:", error)
-      setIsListening(false)
-      toast({
-        title: "Error",
-        description: "Failed to start voice recognition. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const stopListening = () => {
-    if (recognitionRef.current && isListening) {
-      try {
-        recognitionRef.current.stop()
-      } catch (error) {
-        console.error("Error stopping speech recognition:", error)
+      if (!response.ok) {
+        throw new Error('Failed to convert text to speech');
       }
-      setIsListening(false)
-    }
-  }
 
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening()
-    } else {
-      startListening()
-    }
-  }
+      const audioBlob = await response.blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+      };
 
-  const speak = (text: string) => {
-    if (synthRef.current) {
-      synthRef.current.cancel()
-      const utterance = new SpeechSynthesisUtterance(text)
-      utterance.lang = "en-US"
-      utterance.rate = 1.0
-      utterance.pitch = 1.0
-      synthRef.current.speak(utterance)
+      await audio.play();
+    } catch (error) {
+      console.error('Error playing speech:', error);
+      toast({
+        title: "Speech Error",
+        description: "Failed to play speech. Please try again.",
+        variant: "destructive",
+      });
     }
   }
 
@@ -254,7 +223,7 @@ export default function VoiceAssistant() {
         .find((msg) => msg.role === "assistant")
 
       if (lastAssistantMessage?.content && typeof lastAssistantMessage.content === 'string') {
-        speak(lastAssistantMessage.content)
+        await speak(lastAssistantMessage.content)
       } else {
         console.log("No speakable assistant message content found or content is not a string:", lastAssistantMessage?.content)
       }
@@ -266,7 +235,7 @@ export default function VoiceAssistant() {
         content: errorMessageContent,
       }
       setMessages((prev) => [...prev, errorMessageForApi])
-      speak(errorMessageContent)
+      await speak(errorMessageContent)
       toast({
         title: "API Error",
         description: errorMessageContent,
@@ -391,7 +360,7 @@ export default function VoiceAssistant() {
           <form onSubmit={handleTextSubmit} className="flex gap-2 mt-auto">
             <Button
               type="button"
-              onClick={toggleListening}
+              onClick={isListening ? stopListening : startListening}
               variant={isListening ? "destructive" : "default"}
               size="icon"
               className={`shrink-0 rounded-md ${
@@ -399,9 +368,9 @@ export default function VoiceAssistant() {
               } ${!isSpeechSupported || isProcessing ? "opacity-50 cursor-not-allowed" : ""} ${transitionStyle}`}
               disabled={!isSpeechSupported || isProcessing}
               title={
-                 isProcessing ? "Processing..." :
-                 isSpeechSupported ? (isListening ? "Stop listening" : "Start listening") :
-                 "Voice recognition not supported"
+                isProcessing ? "Processing..." :
+                isSpeechSupported ? (isListening ? "Stop listening" : "Start listening") :
+                "Voice recognition not supported"
               }
             >
               {isListening ? <MicOff size={18} /> : <Mic size={18} />}
