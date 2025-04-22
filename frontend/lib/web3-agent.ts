@@ -1,13 +1,6 @@
 import OpenAI from 'openai';
 import { ethers } from 'ethers';
-import { addressBook } from './address-book'; // Import addressBook
-// Removed dotenv import, rely on Next.js process.env loading
-// Added ChatCompletionToolMessageParam
-import type { ChatCompletionMessageParam, ChatCompletionToolMessageParam } from 'openai/resources/chat/completions';
-
-// --- Address Book ---
-// Moved to frontend/lib/addressBook.ts
-
+import { addressBook } from './address-book';
 // --- Configuration ---
 // Use process.env directly as Next.js handles .env.local loading
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
