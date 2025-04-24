@@ -70,6 +70,7 @@ This project implements a voice-first interface for cryptocurrency operations, m
 - joyjsmun (Unique ID: OFVwFA)
 - ifanzalukhu97 (Unique ID: S3lFve)
 - superical (Unique ID: uiZaHk)
+- nvinnikov (Unique ID: VvZfPu)
 - Add more contributors...
 
 
